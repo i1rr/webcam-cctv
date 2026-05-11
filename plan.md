@@ -559,7 +559,7 @@ class CameraWorker:
         asyncio.run_coroutine_threadsafe(self.queue.put(event), self.loop)
 ```
 
-### Step 12: Video compression / re-encoding helper (bot.py)
+### Step 12: Video compression / re-encoding helper (bot.py) [x]
 
 **Always re-encode to H.264** before sending to Telegram. `mp4v` (MPEG-4 Part 2) files do not play inline in Telegram mobile clients. Re-encoding ensures inline playback and optimal file size. `-movflags +faststart` moves the MP4 index to the file front for progressive streaming.
 
@@ -629,7 +629,7 @@ def _cleanup_partial(path: str):
 
 ## Section 4 — Telegram Bot
 
-### Step 13: bot.py — Application, handlers, event consumer
+### Step 13: bot.py — Application, handlers, event consumer [x]
 
 **Security:**
 - Every handler verifies `update.effective_chat.id == cfg.chat_id`.
@@ -861,10 +861,10 @@ def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
     return app
 ```
 
-### Step 14: Motion alert
+### Step 14: Motion alert [x]
 `process_camera_events` handles `motion_start`. If snapshot exists and `snapshot_on_alert=true`: `send_photo` with caption. Otherwise: `send_message` fallback. Telegram API errors are caught and logged without crashing.
 
-### Step 15: Recordings list and video sending
+### Step 15: Recordings list and video sending [x]
 `cb_menu` handles `menu_recordings` and `send_*`. Key guarantees:
 - Filename regex + `is_relative_to()` guard closes path traversal
 - Active recording excluded from sending (corrupt-send prevention)
@@ -872,7 +872,7 @@ def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
 - Temp file always deleted in `finally` after sending
 - `send_video` with `supports_streaming=True` enables progressive Telegram playback
 
-### Step 16: Status handler
+### Step 16: Status handler [x]
 `menu_status` → `worker.get_state()` → `"IDLE"` or `"RECORDING"`.
 
 ---

@@ -1,0 +1,285 @@
+import asyncio, logging, os, re, subprocess, shutil
+from pathlib import Path
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.ext import (
+    Application, ApplicationBuilder, CommandHandler,
+    CallbackQueryHandler, ContextTypes,
+)
+from config import Config
+from camera import CameraWorker
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Step 12: Video compression / re-encoding helper
+# ---------------------------------------------------------------------------
+
+def _find_ffmpeg() -> str | None:
+    """Check PATH first, then project directory (user may place ffmpeg.exe there)."""
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    local = Path(__file__).parent / "ffmpeg.exe"
+    return str(local) if local.exists() else None
+
+
+def compress_for_telegram(src_path: str, max_mb: int = 45) -> str:
+    """
+    Re-encode src_path to H.264/AAC MP4 for Telegram inline playback.
+    Returns path to encoded file (a new sibling *_tg.mp4).
+    Caller must delete returned file after sending if it differs from src_path.
+    Returns src_path unchanged if ffmpeg unavailable or encoding fails.
+    """
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        log.warning("ffmpeg not found — sending original; it may not play inline in Telegram")
+        return src_path
+
+    src = Path(src_path)
+    out_path = str(src.with_stem(src.stem + "_tg"))  # Only modifies stem, not parent dirs
+
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-y", "-i", src_path,
+             "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+             "-c:a", "aac", "-movflags", "+faststart",
+             out_path],
+            capture_output=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("ffmpeg timed out encoding %s", src_path)
+        _cleanup_partial(out_path)
+        return src_path
+
+    if result.returncode != 0:
+        log.error("ffmpeg failed: %s", result.stderr.decode(errors="replace"))
+        _cleanup_partial(out_path)
+        return src_path
+
+    size_mb = os.path.getsize(out_path) / (1024 * 1024)
+    if size_mb > max_mb:
+        log.warning("Encoded file %.1f MB > %d MB limit; sending anyway", size_mb, max_mb)
+
+    return out_path
+
+
+def _cleanup_partial(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Step 13: Application, handlers, event consumer
+# ---------------------------------------------------------------------------
+
+# Strict pattern: only filenames produced by camera.py; \Z prevents trailing-newline bypass
+_SAFE_FILENAME_RE = re.compile(r'\Arecording_\d{8}_\d{6}\.mp4\Z')
+
+MAIN_MENU = InlineKeyboardMarkup([
+    [InlineKeyboardButton("📹 Записи", callback_data="menu_recordings")],
+    [InlineKeyboardButton("📊 Статус", callback_data="menu_status")],
+])
+
+
+def _authorized(update: Update, cfg: Config) -> bool:
+    return update.effective_chat.id == cfg.chat_id
+
+
+def _safe_file_path(filename: str, output_dir: str) -> str | None:
+    """
+    Returns absolute path only if filename matches the expected pattern AND
+    resolves to a location inside output_dir. Uses is_relative_to() which is
+    correct and immune to the startswith() prefix-collision vulnerability.
+    """
+    if not _SAFE_FILENAME_RE.match(filename):
+        return None
+    base = Path(output_dir).resolve()
+    candidate = (base / filename).resolve()
+    if not candidate.is_relative_to(base):
+        return None
+    return str(candidate)
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cfg: Config = context.bot_data["config"]
+    if not _authorized(update, cfg):
+        return
+    await update.message.reply_text("🎥 CCTV Monitor активен.\nВыберите действие:", reply_markup=MAIN_MENU)
+
+
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remote stop via Telegram — useful when desktop is locked and Ctrl+C is unavailable."""
+    cfg: Config = context.bot_data["config"]
+    if not _authorized(update, cfg):
+        return
+    await update.message.reply_text("🛑 CCTV Monitor останавливается…")
+    context.bot_data["stop_event"].set()
+
+
+async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    cfg: Config = context.bot_data["config"]
+    worker: CameraWorker = context.bot_data["camera_worker"]
+
+    if not _authorized(update, cfg):
+        await query.answer()
+        return
+
+    await query.answer()
+
+    if query.data == "menu_status":
+        state = worker.get_state()
+        label = "🔴 Идёт запись" if state == "RECORDING" else "🟢 Ожидание"
+        await query.edit_message_text(f"Состояние: {label}", reply_markup=MAIN_MENU)
+
+    elif query.data == "menu_recordings":
+        try:
+            all_files = list(Path(cfg.output_dir).glob("recording_*.mp4"))
+            files = sorted(
+                [p for p in all_files if p.exists()],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )[:10]
+        except (OSError, FileNotFoundError):
+            files = []
+
+        if not files:
+            await query.edit_message_text("Записей нет.", reply_markup=MAIN_MENU)
+            return
+
+        active_file = worker.get_current_file()
+        active_name = os.path.basename(active_file) if active_file else None
+
+        buttons = []
+        for f in files:
+            try:
+                size_mb = f.stat().st_size // (1024 * 1024)
+            except OSError:
+                size_mb = 0
+            suffix = " 🔴" if f.name == active_name else ""
+            buttons.append([InlineKeyboardButton(
+                f"📄 {f.name}{suffix} ({size_mb} МБ)",
+                callback_data=f"send_{f.name}",
+            )])
+        buttons.append([InlineKeyboardButton("← Назад", callback_data="menu_back")])
+        await query.edit_message_text(
+            "Выберите запись для отправки (🔴 = активная запись, недоступна):",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    elif query.data.startswith("send_"):
+        filename = query.data[5:]
+        file_path = _safe_file_path(filename, cfg.output_dir)
+        if not file_path or not os.path.exists(file_path):
+            await query.edit_message_text("Файл не найден или недопустимое имя.", reply_markup=MAIN_MENU)
+            return
+
+        # Refuse to send the currently-recording file (would produce a corrupt/truncated video)
+        active = worker.get_current_file()
+        if active and os.path.abspath(active) == os.path.abspath(file_path):
+            await query.edit_message_text(
+                "⏳ Эта запись сейчас ведётся — подождите её завершения.",
+                reply_markup=MAIN_MENU,
+            )
+            return
+
+        await query.edit_message_text(f"⏳ Подготовка и отправка {filename}…")
+        try:
+            send_path = await asyncio.to_thread(compress_for_telegram, file_path, cfg.max_send_size_mb)
+        except Exception as e:
+            log.exception("compress_for_telegram failed for %s", filename)
+            await context.bot.send_message(
+                chat_id=cfg.chat_id,
+                text=f"⚠️ Ошибка подготовки файла: {e}",
+                reply_markup=MAIN_MENU,
+            )
+            return
+
+        try:
+            with open(send_path, "rb") as f:
+                await context.bot.send_video(
+                    chat_id=cfg.chat_id,
+                    video=InputFile(f, filename=filename),
+                    supports_streaming=True,
+                )
+        except Exception as e:
+            log.exception("Failed to send video %s", filename)
+            await context.bot.send_message(
+                chat_id=cfg.chat_id,
+                text=f"⚠️ Ошибка отправки видео: {e}",
+                reply_markup=MAIN_MENU,
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=cfg.chat_id,
+                text="✅ Готово.",
+                reply_markup=MAIN_MENU,
+            )
+        finally:
+            if send_path != file_path and os.path.exists(send_path):
+                os.remove(send_path)
+
+    elif query.data == "menu_back":
+        await query.edit_message_text("Выберите действие:", reply_markup=MAIN_MENU)
+
+
+async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Config):
+    """Drains camera event queue and dispatches Telegram messages. Runs forever."""
+    while True:
+        event = await queue.get()
+        try:
+            if event["type"] == "motion_start":
+                snap = event.get("snapshot_path")
+                if snap and os.path.exists(snap) and cfg.snapshot_on_alert:
+                    with open(snap, "rb") as f:
+                        await app.bot.send_photo(
+                            chat_id=cfg.chat_id,
+                            photo=InputFile(f),
+                            caption="🚨 Обнаружено движение у двери! Начата запись.",
+                        )
+                else:
+                    await app.bot.send_message(
+                        chat_id=cfg.chat_id,
+                        text="🚨 Обнаружено движение у двери! Начата запись.",
+                    )
+
+            elif event["type"] == "recording_saved":
+                is_rotation = event.get("is_segment_rotation", False)
+                if is_rotation:
+                    # Mid-session segment: log only, no Telegram notification
+                    log.info("Segment saved (rotation): %s", event.get("file_path", "?"))
+                else:
+                    # Person left — final notification
+                    fpath = event.get("file_path", "")
+                    fname = os.path.basename(fpath) if fpath else "?"
+                    size_mb = (os.path.getsize(fpath) / (1024 * 1024)
+                               if fpath and os.path.exists(fpath) else 0)
+                    await app.bot.send_message(
+                        chat_id=cfg.chat_id,
+                        text=(f"✅ Запись завершена: {fname} ({size_mb:.1f} МБ)\n"
+                              "Используй меню 📹 для просмотра."),
+                        reply_markup=MAIN_MENU,
+                    )
+
+            elif event["type"] == "camera_error":
+                await app.bot.send_message(
+                    chat_id=cfg.chat_id,
+                    text=f"⚠️ Ошибка камеры: {event.get('message', 'Unknown')}",
+                )
+        except Exception:
+            log.exception("Error processing camera event %s", event.get("type"))
+
+
+def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
+    app = ApplicationBuilder().token(cfg.bot_token).build()
+    app.bot_data["config"] = cfg
+    app.bot_data["camera_worker"] = camera_worker
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("stop", cmd_stop))
+    app.add_handler(CallbackQueryHandler(cb_menu))
+    return app
