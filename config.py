@@ -21,6 +21,7 @@ class Config:
     roi: tuple          # (x1, y1, x2, y2) normalized 0.0–1.0
     output_dir: str
     segment_max_minutes: int
+    min_free_gb: float
     max_send_size_mb: int
     snapshot_on_alert: bool
 
@@ -62,6 +63,7 @@ def load_config() -> Config:
         ),
         output_dir=ini.get("recording", "output_dir", fallback="recordings"),
         segment_max_minutes=ini.getint("recording", "segment_max_minutes", fallback=10),
+        min_free_gb=ini.getfloat("recording", "min_free_gb", fallback=1.0),
         max_send_size_mb=ini.getint("telegram", "max_send_size_mb", fallback=45),
         snapshot_on_alert=ini.getboolean("telegram", "snapshot_on_alert", fallback=True),
     )

@@ -151,11 +151,12 @@ class CameraWorker:
         return any(cv2.contourArea(c) > self.cfg.min_contour_area for c in contours)
 
     def _check_disk_space(self) -> bool:
-        """Return True if >= 1 GB free. Sends warning event if low."""
+        """Return True if free space >= cfg.min_free_gb. Pushes a warning event when low."""
         try:
             free_gb = shutil.disk_usage(self.cfg.output_dir).free / (1024 ** 3)
-            if free_gb < 1.0:
-                msg = f"Low disk space: {free_gb:.1f} GB free — recording disabled"
+            if free_gb < self.cfg.min_free_gb:
+                msg = (f"Low disk space: {free_gb:.1f} GB free "
+                       f"(threshold {self.cfg.min_free_gb:.1f} GB) — recording disabled")
                 log.warning(msg)
                 self._push({"type": "camera_error", "message": msg})
                 return False
