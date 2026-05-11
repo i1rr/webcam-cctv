@@ -1,7 +1,8 @@
 import asyncio, logging, os, re, subprocess, shutil
 from pathlib import Path
+from typing import Awaitable, Callable
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, TimedOut, RetryAfter
 from telegram.ext import (
     Application, ApplicationBuilder, CommandHandler,
     CallbackQueryHandler, ContextTypes,
@@ -242,24 +243,68 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit(query, "Choose an action:", reply_markup=MAIN_MENU)
 
 
+async def _send_with_retry(attempt: Callable[[], Awaitable], *, what: str):
+    """Retry a Telegram send forever on transient network errors.
+
+    `attempt` must be a 0-arg async callable that returns a fresh coroutine each
+    call — awaited coroutines aren't re-awaitable, and senders that open files
+    need to re-open them per attempt. Backoff: 5s → 10s → 20s → 40s → 60s (cap).
+    Cancels cleanly when the consumer task is cancelled at shutdown."""
+    delay = 5.0
+    n = 0
+    while True:
+        n += 1
+        try:
+            return await attempt()
+        except RetryAfter as e:
+            wait = float(e.retry_after) + 1.0
+            log.warning("Telegram rate-limited (%s): waiting %.0fs", what, wait)
+            await asyncio.sleep(wait)
+        except (NetworkError, TimedOut) as e:
+            log.warning("Telegram %s failed (attempt %d): %s — retrying in %.0fs",
+                        what, n, e, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+
 async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Config):
-    """Drains camera event queue and dispatches Telegram messages. Runs forever."""
+    """Drains camera event queue and dispatches Telegram messages. Runs forever.
+
+    Each send is retried on NetworkError/TimedOut so a Wi-Fi blackout doesn't
+    drop motion alerts — events queue up locally and flush in order once the
+    network returns."""
     while True:
         event = await queue.get()
         try:
             if event["type"] == "motion_start":
                 snap = event.get("snapshot_path")
-                if snap and os.path.exists(snap) and cfg.snapshot_on_alert:
-                    with open(snap, "rb") as f:
-                        await app.bot.send_photo(
-                            chat_id=cfg.chat_id,
-                            photo=InputFile(f),
-                            caption="🚨 Motion detected! Recording started.",
+                if snap and cfg.snapshot_on_alert and os.path.exists(snap):
+                    async def _send_photo():
+                        # Re-open per attempt: InputFile consumes the handle
+                        with open(snap, "rb") as f:
+                            return await app.bot.send_photo(
+                                chat_id=cfg.chat_id,
+                                photo=InputFile(f),
+                                caption="🚨 Motion detected! Recording started.",
+                            )
+                    try:
+                        await _send_with_retry(_send_photo, what="motion_start photo")
+                    except FileNotFoundError:
+                        # Snapshot got cleaned up between queueing and sending — text fallback
+                        await _send_with_retry(
+                            lambda: app.bot.send_message(
+                                chat_id=cfg.chat_id,
+                                text="🚨 Motion detected! Recording started.",
+                            ),
+                            what="motion_start message (fallback)",
                         )
                 else:
-                    await app.bot.send_message(
-                        chat_id=cfg.chat_id,
-                        text="🚨 Motion detected! Recording started.",
+                    await _send_with_retry(
+                        lambda: app.bot.send_message(
+                            chat_id=cfg.chat_id,
+                            text="🚨 Motion detected! Recording started.",
+                        ),
+                        what="motion_start message",
                     )
 
             elif event["type"] == "recording_saved":
@@ -273,20 +318,39 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
                     fname = os.path.basename(fpath) if fpath else "?"
                     size_mb = (os.path.getsize(fpath) / (1024 * 1024)
                                if fpath and os.path.exists(fpath) else 0)
-                    await app.bot.send_message(
-                        chat_id=cfg.chat_id,
-                        text=(f"✅ Recording finished: {fname} ({size_mb:.1f} MB)\n"
-                              "Use the 📹 menu to view."),
-                        reply_markup=MAIN_MENU,
+                    await _send_with_retry(
+                        lambda: app.bot.send_message(
+                            chat_id=cfg.chat_id,
+                            text=(f"✅ Recording finished: {fname} ({size_mb:.1f} MB)\n"
+                                  "Use the 📹 menu to view."),
+                            reply_markup=MAIN_MENU,
+                        ),
+                        what="recording_saved message",
                     )
 
             elif event["type"] == "camera_error":
-                await app.bot.send_message(
-                    chat_id=cfg.chat_id,
-                    text=f"⚠️ Camera error: {event.get('message', 'Unknown')}",
+                await _send_with_retry(
+                    lambda: app.bot.send_message(
+                        chat_id=cfg.chat_id,
+                        text=f"⚠️ Camera error: {event.get('message', 'Unknown')}",
+                    ),
+                    what="camera_error message",
                 )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             log.exception("Error processing camera event %s", event.get("type"))
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Top-level handler so PTB stops logging 'No error handlers are registered'.
+    Long-poll network blips are auto-retried by Updater; we just downgrade their
+    log level so cctv.log isn't swamped by overnight Wi-Fi stutters."""
+    err = context.error
+    if isinstance(err, (NetworkError, TimedOut)):
+        log.info("Transient network error in handler: %s", err)
+    else:
+        log.error("Unhandled error in bot handler", exc_info=err)
 
 
 def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
@@ -307,4 +371,5 @@ def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CallbackQueryHandler(cb_menu))
+    app.add_error_handler(on_error)
     return app
