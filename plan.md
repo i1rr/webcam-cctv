@@ -161,7 +161,7 @@ Complete once before first use:
 
 5. **Verify Brio driver** — Device Manager → Cameras: camera must appear with no warning icons.
 
-### Step 8: start_cctv.bat launcher
+### Step 8: start_cctv.bat launcher [x]
 ```bat
 @echo off
 cd /d "%~dp0"
