@@ -18,22 +18,23 @@ The application watches a configurable region of the camera frame for motion, re
    ```powershell
    pip install -r requirements.txt
    ```
-4. Install **ffmpeg**. Either add `ffmpeg.exe` to your `PATH` or drop `ffmpeg.exe` next to `main.py` in the project directory. Required for H.264 re-encoding of large recordings before sending to Telegram.
-5. Copy `.env.example` to `.env` and fill in your bot credentials:
+4. Install **hidapi.dll** for the `hid` package (Brio LED control). Download the latest `hidapi-win.zip` from https://github.com/libusb/hidapi/releases, extract `x64\hidapi.dll`, and place it in either the project root or `venv\Scripts\`. The application's startup code probes both locations and registers the directory before `import hid`.
+5. Install **ffmpeg**. Either add `ffmpeg.exe` to your `PATH` or drop `ffmpeg.exe` next to `main.py` in the project directory. Required for H.264 re-encoding of large recordings before sending to Telegram.
+6. Copy `.env.example` to `.env` and fill in your bot credentials:
 
    ```
    BOT_TOKEN=<token from @BotFather>
    CHAT_ID=<numeric Telegram chat ID of the authorized user>
    ```
-6. Run the interactive ROI selector once to mark the motion zone (e.g., a door area):
+7. Run the interactive ROI selector once to mark the motion zone (e.g., a door area):
 
    ```powershell
    python setup_roi.py
    ```
 
    Drag a rectangle, press ENTER. The normalized coordinates are written to `config.ini` under `[detection]`.
-7. Complete the **one-time Windows setup** described in [SETUP.md](SETUP.md) (USB selective suspend, screen saver, monitor sleep, Brio driver check). System sleep is suppressed programmatically and needs no manual setting.
-8. Start the monitor:
+8. Complete the **one-time Windows setup** described in [SETUP.md](SETUP.md) (USB selective suspend, screen saver, monitor sleep, Brio driver check). System sleep is suppressed programmatically and needs no manual setting.
+9. Start the monitor:
 
    ```
    start_cctv.bat

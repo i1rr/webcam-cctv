@@ -2,6 +2,20 @@
 
 import ctypes
 import logging
+import os
+import sys
+from pathlib import Path
+
+# Python 3.8+ on Windows no longer searches PATH/CWD for native DLLs, so
+# `import hid` can't find hidapi.dll even when it sits beside python.exe.
+# Probe the project root and the venv's Scripts dir; if hidapi.dll is there,
+# register it explicitly before importing hid.
+if sys.platform == "win32":
+    _here = Path(__file__).resolve().parent
+    for _candidate in (_here, _here / "venv" / "Scripts"):
+        if (_candidate / "hidapi.dll").exists():
+            os.add_dll_directory(str(_candidate))
+            break
 
 import hid
 
