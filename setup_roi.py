@@ -1,6 +1,6 @@
 """
 Run once: python setup_roi.py
-Click and drag a rectangle over the door area. ENTER to save, ESC to cancel.
+Click and drag a rectangle over the area you want to monitor. ENTER to save, ESC to cancel.
 """
 import cv2, configparser
 
@@ -28,7 +28,7 @@ def mouse_callback(event, x, y, flags, param):
 cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_w)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_h)
-WIN = "Draw door zone — ENTER to save, ESC to cancel"
+WIN = "Draw monitored zone — ENTER to save, ESC to cancel"
 cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
 cv2.resizeWindow(WIN, cam_w, cam_h)
 cv2.moveWindow(WIN, 100, 100)

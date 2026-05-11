@@ -254,12 +254,12 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
                         await app.bot.send_photo(
                             chat_id=cfg.chat_id,
                             photo=InputFile(f),
-                            caption="🚨 Motion detected at the door! Recording started.",
+                            caption="🚨 Motion detected! Recording started.",
                         )
                 else:
                     await app.bot.send_message(
                         chat_id=cfg.chat_id,
-                        text="🚨 Motion detected at the door! Recording started.",
+                        text="🚨 Motion detected! Recording started.",
                     )
 
             elif event["type"] == "recording_saved":

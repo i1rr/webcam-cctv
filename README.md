@@ -97,7 +97,7 @@ In Telegram, send `/start` to your bot to confirm it is reachable. You should se
 
 | Event                          | Message                                                                  |
 | ------------------------------ | ------------------------------------------------------------------------ |
-| Motion starts                  | Snapshot photo + caption "🚨 Motion detected at the door! Recording started." |
+| Motion starts                  | Snapshot photo + caption "🚨 Motion detected! Recording started." |
 | Recording ends (no motion 30s) | "✅ Recording finished: `recording_…mp4` (N MB)" + menu                  |
 | Segment rolls over mid-event   | Logged only (no Telegram spam during long events)                        |
 | Disk free < `min_free_gb`      | "⚠️ Low disk space…" — recording is blocked until space frees            |
