@@ -4,7 +4,7 @@ This document is the operator's verification checklist after completing installa
 
 ## Step 19 — Camera index enumeration
 
-If camera index 0 is wrong (e.g., multiple cameras), find the Brio:
+If camera index 0 is wrong (e.g., multiple cameras), find the right camera:
 
 ```bash
 python -c "

@@ -4,7 +4,7 @@ from pathlib import Path
 from config import load_config
 from camera import CameraWorker
 from bot import build_application, process_camera_events
-from windows_utils import prevent_sleep, allow_sleep, try_disable_brio_led
+from windows_utils import prevent_sleep, allow_sleep
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,10 +40,6 @@ async def _run():
 
     prevent_sleep()
     atexit.register(allow_sleep)
-
-    led_ok = try_disable_brio_led()
-    if not led_ok:
-        log.info("Brio LED control unavailable — continuing without it")
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     _check_incomplete_recordings(cfg.output_dir)

@@ -8,7 +8,7 @@ Windows desktop CCTV using a Logitech Brio + Telegram bot. Single-host, single-u
 - `camera.py` — capture loop, MOG2 motion detection with 100-frame warmup, debounced IDLE↔RECORDING state machine, segmented mp4 writing (10 min cap), snapshot capture, disk-space guard. Emits events to an `asyncio.Queue` consumed by `bot.py`.
 - `bot.py` — `python-telegram-bot` Application. `/start` (inline menu), `/stop` (remote shutdown), `/status`, callback handlers for listing/sending recordings. Path-traversal guard on filenames, current-file guard so the in-progress segment is never sent, ffmpeg re-encode to H.264 when a file exceeds `max_send_size_mb`.
 - `config.py` — `Config` dataclass; loads `config.ini` via configparser and `.env` via python-dotenv.
-- `windows_utils.py` — `prevent_sleep()` / `allow_sleep()` wrappers around `SetThreadExecutionState`; best-effort Logitech Brio HID LED disable.
+- `windows_utils.py` — `prevent_sleep()` / `allow_sleep()` wrappers around `SetThreadExecutionState`.
 - `setup_roi.py` — interactive OpenCV tool to draw the door ROI; writes normalized `roi_x1..roi_y2` back to `config.ini [detection]`.
 - `start_cctv.bat` — venv activate + `python main.py` + `pause`.
 
@@ -19,7 +19,6 @@ Windows desktop CCTV using a Logitech Brio + Telegram bot. Single-host, single-u
 - **CHAT_ID whitelist** is the only authorization. Every handler in `bot.py` checks `update.effective_chat.id == cfg.chat_id` before doing anything. Don't add a handler without that check.
 - **ffmpeg re-encodes to H.264 always** before send — `mp4v` fourcc won't play inline on Telegram. The codec choice in `camera.py` is independent; bot-side re-encode is required for delivery.
 - **No auto-deletion** of recordings. Operator decides when to clear `recordings/`. Disk-space guard *blocks new recordings* below 1 GB free but never deletes.
-- **Brio LED disable is best-effort** — most Brio firmware ignores HID LED commands. Treat success as a bonus; never assume the LED is off.
 
 ## Configuration
 
@@ -36,6 +35,6 @@ Windows desktop CCTV using a Logitech Brio + Telegram bot. Single-host, single-u
 
 ## Operator docs
 
-- `SETUP.md` — one-time Windows manual config (USB selective suspend, monitor sleep, screensaver, Brio driver). Required before first run.
+- `SETUP.md` — one-time Windows manual config (USB selective suspend, monitor sleep, screensaver, camera driver). Required before first run.
 - `TESTING.md` — verification procedures (camera enumeration, codec smoke test, ROI, motion calibration, lock-screen ops, sleep prevention, USB suspend, large-file re-encode, current-file guard, path-traversal guard, disk-space warning).
 - `archive/2026-05-11_*.md` — the original implementation plan, frozen as historical reference. Don't edit; supersede via newer commits if behavior changes.
