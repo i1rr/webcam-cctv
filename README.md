@@ -4,7 +4,7 @@ Windows desktop CCTV with a USB webcam and a Telegram bot for motion alerts and 
 
 The application watches a configurable region of the camera frame for motion, records segmented MP4 clips while motion persists, sends a snapshot + alert to a single authorized Telegram chat when recording starts, and a summary when it ends. Past recordings are browsable and re-sendable from the bot's inline menu.
 
-Single-host, single-user. Operator starts the application manually via `start_cctv.bat`; the Telegram bot is the only remote interface. The bot UI is in Russian.
+Single-host, single-user. Operator starts the application manually via `start_cctv.bat`; the Telegram bot is the only remote interface.
 
 ---
 
@@ -88,33 +88,33 @@ Double-click `start_cctv.bat` (or run it from a terminal). The script activates 
 
 In Telegram, send `/start` to your bot to confirm it is reachable. You should see:
 
-> 🎥 CCTV Monitor активен.
-> Выберите действие:
+> 🎥 CCTV Monitor active.
+> Choose an action:
 >
-> [📹 Записи] [📊 Статус]
+> [📹 Recordings] [📊 Status]
 
 ### What the bot sends on its own
 
-| Event                          | Message                                                                |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| Motion starts                  | Snapshot photo + caption "🚨 Обнаружено движение у двери! Начата запись." |
-| Recording ends (no motion 30s) | "✅ Запись завершена: `recording_…mp4` (N МБ)" + menu                  |
-| Segment rolls over mid-event   | Logged only (no Telegram spam during long events)                      |
-| Disk free < `min_free_gb`      | "⚠️ Мало места на диске…" — recording is blocked until space frees     |
-| Camera error                   | "⚠️ Ошибка камеры: …"                                                  |
+| Event                          | Message                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| Motion starts                  | Snapshot photo + caption "🚨 Motion detected at the door! Recording started." |
+| Recording ends (no motion 30s) | "✅ Recording finished: `recording_…mp4` (N MB)" + menu                  |
+| Segment rolls over mid-event   | Logged only (no Telegram spam during long events)                        |
+| Disk free < `min_free_gb`      | "⚠️ Low disk space…" — recording is blocked until space frees            |
+| Camera error                   | "⚠️ Camera error: …"                                                     |
 
 The mid-event segment rotation cap is `segment_max_minutes` (default 10). The disk-space warning fires once per OK→low transition, not on every frame.
 
 ### Browsing past recordings
 
-Tap **📹 Записи** in the inline menu. You get up to 10 most-recent files, newest first, with size in MB. Tap any entry — the bot re-encodes it to H.264/AAC via ffmpeg if needed and sends it back as inline-playable video.
+Tap **📹 Recordings** in the inline menu. You get up to 10 most-recent files, newest first, with size in MB. Tap any entry — the bot re-encodes it to H.264/AAC via ffmpeg if needed and sends it back as inline-playable video.
 
 - The currently-recording file is marked with **🔴** and refuses to send (it would be truncated). Wait for the recording to end.
-- Filenames outside the expected `recording_YYYYMMDD_HHMMSS.mp4` pattern, or paths that escape the recordings directory, are rejected with "Файл не найден или недопустимое имя."
+- Filenames outside the expected `recording_YYYYMMDD_HHMMSS.mp4` pattern, or paths that escape the recordings directory, are rejected with "File not found or invalid name."
 
 ### Checking state
 
-Tap **📊 Статус** — shows either "🟢 Ожидание" or "🔴 Идёт запись".
+Tap **📊 Status** — shows either "🟢 Idle" or "🔴 Recording".
 
 ### Stopping the monitor
 

@@ -78,11 +78,11 @@ Place a 5+ minute recording in `recordings/`, send `/start` to the bot, and sele
 
 ## Step 27 — Current-file guard test
 
-While a recording is active, open the "Записи" menu in Telegram. The currently active recording must be displayed with a `🔴` marker, and tapping it must return the message "сейчас ведётся" without attempting to send the in-progress file.
+While a recording is active, open the "Recordings" menu in Telegram. The currently active recording must be displayed with a `🔴` marker, and tapping it must return the message "in progress" without attempting to send the in-progress file.
 
 ## Step 28 — Path traversal guard test
 
-Send a bot callback with a payload such as `send_../../windows/system32/config/SAM`. The bot must return "Файл не найден или недопустимое имя." and must not access or send any file outside the `recordings/` directory.
+Send a bot callback with a payload such as `send_../../windows/system32/config/SAM`. The bot must return "File not found or invalid name." and must not access or send any file outside the `recordings/` directory.
 
 ## Step 29 — Disk space warning test
 

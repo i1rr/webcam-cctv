@@ -82,8 +82,8 @@ def _cleanup_partial(path: str):
 _SAFE_FILENAME_RE = re.compile(r'\Arecording_\d{8}_\d{6}\.mp4\Z')
 
 MAIN_MENU = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📹 Записи", callback_data="menu_recordings")],
-    [InlineKeyboardButton("📊 Статус", callback_data="menu_status")],
+    [InlineKeyboardButton("📹 Recordings", callback_data="menu_recordings")],
+    [InlineKeyboardButton("📊 Status", callback_data="menu_status")],
 ])
 
 
@@ -110,7 +110,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg: Config = context.bot_data["config"]
     if not _authorized(update, cfg):
         return
-    await update.message.reply_text("🎥 CCTV Monitor активен.\nВыберите действие:", reply_markup=MAIN_MENU)
+    await update.message.reply_text("🎥 CCTV Monitor active.\nChoose an action:", reply_markup=MAIN_MENU)
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -118,7 +118,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg: Config = context.bot_data["config"]
     if not _authorized(update, cfg):
         return
-    await update.message.reply_text("🛑 CCTV Monitor останавливается…")
+    await update.message.reply_text("🛑 CCTV Monitor shutting down…")
     context.bot_data["stop_event"].set()
 
 
@@ -146,8 +146,8 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "menu_status":
         state = worker.get_state()
-        label = "🔴 Идёт запись" if state == "RECORDING" else "🟢 Ожидание"
-        await _safe_edit(query, f"Состояние: {label}", reply_markup=MAIN_MENU)
+        label = "🔴 Recording" if state == "RECORDING" else "🟢 Idle"
+        await _safe_edit(query, f"State: {label}", reply_markup=MAIN_MENU)
 
     elif query.data == "menu_recordings":
         try:
@@ -161,7 +161,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             files = []
 
         if not files:
-            await _safe_edit(query, "Записей нет.", reply_markup=MAIN_MENU)
+            await _safe_edit(query, "No recordings.", reply_markup=MAIN_MENU)
             return
 
         active_file = worker.get_current_file()
@@ -175,13 +175,13 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 size_mb = 0
             suffix = " 🔴" if f.name == active_name else ""
             buttons.append([InlineKeyboardButton(
-                f"📄 {f.name}{suffix} ({size_mb} МБ)",
+                f"📄 {f.name}{suffix} ({size_mb} MB)",
                 callback_data=f"send_{f.name}",
             )])
-        buttons.append([InlineKeyboardButton("← Назад", callback_data="menu_back")])
+        buttons.append([InlineKeyboardButton("← Back", callback_data="menu_back")])
         await _safe_edit(
             query,
-            "Выберите запись для отправки (🔴 = активная запись, недоступна):",
+            "Choose a recording to send (🔴 = currently recording, unavailable):",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
 
@@ -189,7 +189,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename = query.data[5:]
         file_path = _safe_file_path(filename, cfg.output_dir)
         if not file_path or not os.path.exists(file_path):
-            await _safe_edit(query, "Файл не найден или недопустимое имя.", reply_markup=MAIN_MENU)
+            await _safe_edit(query, "File not found or invalid name.", reply_markup=MAIN_MENU)
             return
 
         # Refuse to send the currently-recording file (would produce a corrupt/truncated video)
@@ -197,19 +197,19 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if active and os.path.abspath(active) == os.path.abspath(file_path):
             await _safe_edit(
                 query,
-                "⏳ Эта запись сейчас ведётся — подождите её завершения.",
+                "⏳ This recording is in progress — wait for it to finish.",
                 reply_markup=MAIN_MENU,
             )
             return
 
-        await _safe_edit(query, f"⏳ Подготовка и отправка {filename}…")
+        await _safe_edit(query, f"⏳ Preparing and sending {filename}…")
         try:
             send_path = await asyncio.to_thread(compress_for_telegram, file_path, cfg.max_send_size_mb)
         except Exception as e:
             log.exception("compress_for_telegram failed for %s", filename)
             await context.bot.send_message(
                 chat_id=cfg.chat_id,
-                text=f"⚠️ Ошибка подготовки файла: {e}",
+                text=f"⚠️ Error preparing file: {e}",
                 reply_markup=MAIN_MENU,
             )
             return
@@ -225,13 +225,13 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception("Failed to send video %s", filename)
             await context.bot.send_message(
                 chat_id=cfg.chat_id,
-                text=f"⚠️ Ошибка отправки видео: {e}",
+                text=f"⚠️ Error sending video: {e}",
                 reply_markup=MAIN_MENU,
             )
         else:
             await context.bot.send_message(
                 chat_id=cfg.chat_id,
-                text="✅ Готово.",
+                text="✅ Done.",
                 reply_markup=MAIN_MENU,
             )
         finally:
@@ -239,7 +239,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(send_path)
 
     elif query.data == "menu_back":
-        await _safe_edit(query, "Выберите действие:", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "Choose an action:", reply_markup=MAIN_MENU)
 
 
 async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Config):
@@ -254,12 +254,12 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
                         await app.bot.send_photo(
                             chat_id=cfg.chat_id,
                             photo=InputFile(f),
-                            caption="🚨 Обнаружено движение у двери! Начата запись.",
+                            caption="🚨 Motion detected at the door! Recording started.",
                         )
                 else:
                     await app.bot.send_message(
                         chat_id=cfg.chat_id,
-                        text="🚨 Обнаружено движение у двери! Начата запись.",
+                        text="🚨 Motion detected at the door! Recording started.",
                     )
 
             elif event["type"] == "recording_saved":
@@ -275,15 +275,15 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
                                if fpath and os.path.exists(fpath) else 0)
                     await app.bot.send_message(
                         chat_id=cfg.chat_id,
-                        text=(f"✅ Запись завершена: {fname} ({size_mb:.1f} МБ)\n"
-                              "Используй меню 📹 для просмотра."),
+                        text=(f"✅ Recording finished: {fname} ({size_mb:.1f} MB)\n"
+                              "Use the 📹 menu to view."),
                         reply_markup=MAIN_MENU,
                     )
 
             elif event["type"] == "camera_error":
                 await app.bot.send_message(
                     chat_id=cfg.chat_id,
-                    text=f"⚠️ Ошибка камеры: {event.get('message', 'Unknown')}",
+                    text=f"⚠️ Camera error: {event.get('message', 'Unknown')}",
                 )
         except Exception:
             log.exception("Error processing camera event %s", event.get("type"))
