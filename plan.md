@@ -175,7 +175,7 @@ pause
 
 ## Section 3 — Camera & Motion Detection
 
-### Step 9: Interactive ROI setup tool (setup_roi.py)
+### Step 9: Interactive ROI setup tool (setup_roi.py) [x]
 Run once. Reads camera index and resolution from `config.ini`. Saves normalized [0.0–1.0] coordinates.
 
 ```python
