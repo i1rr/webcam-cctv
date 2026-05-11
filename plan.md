@@ -95,7 +95,7 @@ snapshot_on_alert = true
 
 ## Section 2 — Windows System Integration
 
-### Step 5: Sleep prevention (windows_utils.py)
+### Step 5: Sleep prevention (windows_utils.py) [x]
 ```python
 import ctypes
 
@@ -116,7 +116,7 @@ Call `prevent_sleep()` at startup; register `allow_sleep()` with `atexit`.
 
 **Note:** If the process is killed via Task Manager (`TerminateProcess`), `atexit` handlers do not run, but the sleep-prevention flag is cleared automatically on the next reboot.
 
-### Step 6: Logitech Brio LED control — best-effort (windows_utils.py)
+### Step 6: Logitech Brio LED control — best-effort (windows_utils.py) [x]
 ```python
 import hid, logging
 
