@@ -28,6 +28,9 @@ class CameraWorker:
         self.writer: cv2.VideoWriter | None = None
         self.current_file: str | None = None
         self.segment_start_time: float = 0.0
+        # Latches when disk space drops below cfg.min_free_gb; cleared once it
+        # recovers. Prevents one Telegram warning per frame while motion persists.
+        self._low_disk_warned: bool = False
 
     def run(self):
         cap = self._open_camera()
@@ -151,17 +154,24 @@ class CameraWorker:
         return any(cv2.contourArea(c) > self.cfg.min_contour_area for c in contours)
 
     def _check_disk_space(self) -> bool:
-        """Return True if free space >= cfg.min_free_gb. Pushes a warning event when low."""
+        """Return True if free space >= cfg.min_free_gb. Pushes a warning event
+        only on the OK→low transition so motion-triggered re-checks don't spam
+        Telegram once per frame."""
         try:
             free_gb = shutil.disk_usage(self.cfg.output_dir).free / (1024 ** 3)
-            if free_gb < self.cfg.min_free_gb:
+        except OSError:
+            return True
+        if free_gb < self.cfg.min_free_gb:
+            if not self._low_disk_warned:
                 msg = (f"Low disk space: {free_gb:.1f} GB free "
                        f"(threshold {self.cfg.min_free_gb:.1f} GB) — recording disabled")
                 log.warning(msg)
                 self._push({"type": "camera_error", "message": msg})
-                return False
-        except OSError:
-            pass
+                self._low_disk_warned = True
+            return False
+        if self._low_disk_warned:
+            log.info("Disk space recovered: %.1f GB free", free_gb)
+            self._low_disk_warned = False
         return True
 
     def _start_recording(self, frame, now: float):
