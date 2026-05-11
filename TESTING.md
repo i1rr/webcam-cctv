@@ -71,3 +71,19 @@ Start the system, lock the workstation, and wait at least 35 minutes. Return to 
 ## Step 25 — USB selective suspend verification
 
 Let the monitor turn off (do not lock or sleep). Trigger motion and verify the camera still responds (recording starts, Telegram alert is delivered). If the camera does not respond, recheck the USB selective suspend setting from Step 7 of `SETUP.md`.
+
+## Step 26 — Large-file / ffmpeg test
+
+Place a 5+ minute recording in `recordings/`, send `/start` to the bot, and select the file from the list. Verify that ffmpeg re-encodes the file and that Telegram plays it inline rather than treating it as a generic document.
+
+## Step 27 — Current-file guard test
+
+While a recording is active, open the "Записи" menu in Telegram. The currently active recording must be displayed with a `🔴` marker, and tapping it must return the message "сейчас ведётся" without attempting to send the in-progress file.
+
+## Step 28 — Path traversal guard test
+
+Send a bot callback with a payload such as `send_../../windows/system32/config/SAM`. The bot must return "Файл не найден или недопустимое имя." and must not access or send any file outside the `recordings/` directory.
+
+## Step 29 — Disk space warning test
+
+Fill the disk to less than 1 GB free (or temporarily reduce free space with a large dummy file), then trigger motion. Verify that Telegram receives a ⚠️ disk space warning and that recording is not started while free space remains below the threshold.
