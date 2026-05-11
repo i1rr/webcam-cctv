@@ -318,7 +318,7 @@ def load_config() -> Config:
     )
 ```
 
-### Step 11: camera.py — Capture loop, MOG2 detection, state machine
+### Step 11: camera.py — Capture loop, MOG2 detection, state machine [x]
 
 State machine: `IDLE ↔ RECORDING`
 
