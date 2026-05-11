@@ -50,3 +50,24 @@ Start via `start_cctv.bat`. Wait approximately 3 seconds (warmup). Wave a hand i
 - After 30 s with no motion: `cctv.log` shows `Recording saved`, and Telegram delivers a final notification (not spammed during recording)
 
 Tune `min_contour_area` (smaller = more sensitive) and `mog2_var_threshold` (larger = less noise-sensitive) as needed.
+
+## Step 23 — Locked Windows operation test
+
+1. Start `start_cctv.bat`.
+2. Lock the workstation with `Win+L`.
+3. Trigger motion in the configured ROI.
+4. Unlock the workstation and verify:
+   - A Telegram alert was delivered while the session was locked.
+   - A new recording file is present in `recordings/`.
+   - `cctv.log` shows continuous timestamps spanning the locked period (no gaps that indicate the process paused).
+
+## Step 24 — Sleep prevention verification
+
+Start the system, lock the workstation, and wait at least 35 minutes. Return to the PC and verify:
+
+- The PC has not entered sleep.
+- The bot still responds to `/start`.
+
+## Step 25 — USB selective suspend verification
+
+Let the monitor turn off (do not lock or sleep). Trigger motion and verify the camera still responds (recording starts, Telegram alert is delivered). If the camera does not respond, recheck the USB selective suspend setting from Step 7 of `SETUP.md`.
