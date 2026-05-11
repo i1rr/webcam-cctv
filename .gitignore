@@ -1,3 +1,25 @@
+# Secrets / local config
+.env
+
+# Tool state
 .plan-executor/
 .claude/
-.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data (created at startup; can contain sensitive captures)
+recordings/
+logs/
+captures/
+cctv.log
+cctv.log.*
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
