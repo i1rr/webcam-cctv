@@ -276,7 +276,18 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
 
 
 def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
-    app = ApplicationBuilder().token(cfg.bot_token).build()
+    # PTB defaults are 5s for every phase, which a single Wi-Fi blip can blow
+    # through. Bumping connect/read/write to 30s and pool to 5s means a missed
+    # alert needs >30s of real network outage, not a momentary stutter.
+    app = (
+        ApplicationBuilder()
+        .token(cfg.bot_token)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .pool_timeout(5.0)
+        .build()
+    )
     app.bot_data["config"] = cfg
     app.bot_data["camera_worker"] = camera_worker
     app.add_handler(CommandHandler("start", cmd_start))
