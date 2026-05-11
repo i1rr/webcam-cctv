@@ -28,8 +28,12 @@ def mouse_callback(event, x, y, flags, param):
 cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_w)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_h)
-cv2.namedWindow("Draw door zone — ENTER to save, ESC to cancel")
-cv2.setMouseCallback("Draw door zone — ENTER to save, ESC to cancel", mouse_callback)
+WIN = "Draw door zone — ENTER to save, ESC to cancel"
+cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(WIN, cam_w, cam_h)
+cv2.moveWindow(WIN, 100, 100)
+cv2.setWindowProperty(WIN, cv2.WND_PROP_TOPMOST, 1)
+cv2.setMouseCallback(WIN, mouse_callback)
 
 while True:
     ret, frame = cap.read()
@@ -39,7 +43,7 @@ while True:
     if has_selection:
         cv2.rectangle(display, (rect[0], rect[1]), (rect[2], rect[3]), (0, 255, 0), 2)
         cv2.putText(display, "ENTER = save", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-    cv2.imshow("Draw door zone — ENTER to save, ESC to cancel", display)
+    cv2.imshow(WIN, display)
     key = cv2.waitKey(1)
     if key == 13 and has_selection:  # ENTER — use has_selection flag, not coordinate truthiness
         h, w = frame.shape[:2]
