@@ -1,3 +1,6 @@
+> **Archived:** 2026-05-11
+> **Summary:** A Python application that uses a Logitech Brio webcam to detect motion near a door (via MOG2 background subtraction), sends Telegram alerts with snapshots, records video of intrusions, and provides a 
+
 # CCTV Monitor — Windows Desktop CCTV with Telegram Bot
 
 ## Summary
