@@ -247,7 +247,7 @@ cap.release()
 cv2.destroyAllWindows()
 ```
 
-### Step 10: config.py — Config dataclass
+### Step 10: config.py — Config dataclass [x]
 ```python
 import os, configparser
 from dataclasses import dataclass
