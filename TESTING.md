@@ -70,7 +70,7 @@ Start the system, lock the workstation, and wait at least 35 minutes. Return to 
 
 ## Step 25 — USB selective suspend verification
 
-Let the monitor turn off (do not lock or sleep). Trigger motion and verify the camera still responds (recording starts, Telegram alert is delivered). If the camera does not respond, recheck the USB selective suspend setting from Step 7 of `SETUP.md`.
+Let the monitor turn off (do not lock or sleep). Trigger motion and verify the camera still responds (recording starts, Telegram alert is delivered). If the camera does not respond, recheck the USB selective suspend setting from Step 1 of `SETUP.md`.
 
 ## Step 26 — Large-file / ffmpeg test
 
