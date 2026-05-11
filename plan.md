@@ -147,7 +147,7 @@ def try_disable_brio_led() -> bool:
 
 **hidapi runtime DLL:** The `hid` package requires `hidapi.dll` on Windows. If startup fails with `ImportError: DLL load failed`, download from https://github.com/libusb/hidapi/releases and place `hidapi.dll` in `venv\Scripts\`.
 
-### Step 7: Windows power settings — manual setup
+### Step 7: Windows power settings — manual setup [x]
 Complete once before first use:
 
 1. **Disable USB selective suspend** — prevents Windows from powering down the Brio's USB port when the monitor sleeps:
