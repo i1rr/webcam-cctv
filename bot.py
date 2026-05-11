@@ -163,14 +163,24 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _safe_edit(query, text: str, **kwargs):
-    """edit_message_text wrapper that swallows the 'Message is not modified'
-    BadRequest Telegram raises when the user re-taps a button whose result
-    is identical to the message's current state. Real failures still bubble."""
+    """edit_message_text wrapper with two graceful cases:
+
+    - 'Message is not modified': user re-tapped a button producing the same
+      content; ignore.
+    - 'There is no text in the message to edit': the inline keyboard lives on
+      a media message (video/photo) whose body is a caption, not text. Send a
+      fresh text message instead so the user isn't left tapping dead buttons.
+    Real failures still bubble."""
     try:
         await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
-        if "not modified" not in str(e).lower():
-            raise
+        msg = str(e).lower()
+        if "not modified" in msg:
+            return
+        if "no text in the message" in msg or "message to edit" in msg:
+            await query.message.reply_text(text, **kwargs)
+            return
+        raise
 
 
 def _back_button(target: str = "menu_back", label: str = "← Back") -> InlineKeyboardButton:
@@ -545,7 +555,6 @@ async def _handle_recording_saved(app: Application, event: dict, cfg: Config):
                     video=InputFile(f, filename=fname),
                     supports_streaming=True,
                     caption=f"{icon} {pretty} ({size_mb:.1f} MB)",
-                    reply_markup=MAIN_MENU,
                 )
         try:
             await _send_with_retry(_send_video, what="recording_saved video")
@@ -619,10 +628,14 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Top-level handler so PTB stops logging 'No error handlers are registered'.
-    Long-poll network blips are auto-retried by Updater; we just downgrade their
-    log level so cctv.log isn't swamped by overnight Wi-Fi stutters."""
+
+    Note PTB's BadRequest inherits from NetworkError, so the BadRequest branch
+    must come first — otherwise legitimate API errors get silently downgraded
+    to INFO as 'transient network error'."""
     err = context.error
-    if isinstance(err, (NetworkError, TimedOut)):
+    if isinstance(err, BadRequest):
+        log.warning("Telegram BadRequest in handler: %s", err)
+    elif isinstance(err, (NetworkError, TimedOut)):
         log.info("Transient network error in handler: %s", err)
     else:
         log.error("Unhandled error in bot handler", exc_info=err)
