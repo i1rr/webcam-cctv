@@ -6,15 +6,14 @@ from config import Config
 log = logging.getLogger(__name__)
 
 def _try_open_writer(path: str, fps: float, size: tuple) -> cv2.VideoWriter:
-    """Try avc1 (H.264) first; fall back to mp4v. Raises if neither works."""
-    for fourcc_str in ("avc1", "mp4v"):
-        fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-        writer = cv2.VideoWriter(path, fourcc, fps, size)
-        if writer.isOpened():
-            log.info("VideoWriter opened with codec %s", fourcc_str)
-            return writer
-        writer.release()
-    raise RuntimeError(f"Cannot open VideoWriter for {path}: no working codec (tried avc1, mp4v)")
+    """Open an mp4v VideoWriter. Telegram delivery re-encodes to H.264 via ffmpeg,
+    so native avc1 isn't worth the OpenH264 DLL dance."""
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(path, fourcc, fps, size)
+    if writer.isOpened():
+        return writer
+    writer.release()
+    raise RuntimeError(f"Cannot open VideoWriter for {path}: mp4v codec unavailable")
 
 
 class CameraWorker:
@@ -150,6 +149,8 @@ class CameraWorker:
         return True
 
     def _start_recording(self, frame, now: float):
+        if self._stop.is_set():
+            return  # Shutdown in flight — don't start a recording we'll immediately abandon
         if not self._check_disk_space():
             return
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -14,6 +14,10 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+# httpx/httpcore INFO logs include the full Telegram URL — which contains the
+# bot token. Drop them to WARNING so tokens never reach cctv.log or the console.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 def _check_incomplete_recordings(output_dir: str):
