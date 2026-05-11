@@ -36,3 +36,17 @@ import os; os.remove('test_codec.mp4')
 ```
 
 At least one codec must show `opened: True`. If only `mp4v` works, ensure ffmpeg is present for H.264 re-encoding.
+
+## Step 21 — ROI setup and verification
+
+Run `python setup_roi.py`. Draw a rectangle over the door. Press ENTER. Verify `config.ini` has non-default `roi_*` values.
+
+## Step 22 — Motion detection calibration
+
+Start via `start_cctv.bat`. Wait approximately 3 seconds (warmup). Wave a hand in the door zone. Verify:
+
+- `cctv.log`: `Recording started`
+- Telegram: alert photo received
+- After 30 s with no motion: `cctv.log` shows `Recording saved`, and Telegram delivers a final notification (not spammed during recording)
+
+Tune `min_contour_area` (smaller = more sensitive) and `mog2_var_threshold` (larger = less noise-sensitive) as needed.
