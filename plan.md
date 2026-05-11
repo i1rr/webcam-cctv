@@ -879,7 +879,7 @@ def build_application(cfg: Config, camera_worker: CameraWorker) -> Application:
 
 ## Section 5 — Main Entry Point & Integration
 
-### Step 17: main.py
+### Step 17: main.py [x]
 
 **Shutdown:** `stop_event.wait()` blocks until either `/stop` (sets the event) or Ctrl+C (injects `CancelledError`). Shutdown sequence: signal camera stop → `join(timeout=5)` camera thread (ensures writer is flushed) → cancel event consumer task (prevents sending on a stopped bot) → stop bot. The outer `try/except KeyboardInterrupt` at `asyncio.run()` catches any edge-case propagation on Windows Python 3.13.
 
@@ -984,7 +984,7 @@ if __name__ == "__main__":
         pass  # Clean exit if CancelledError does not propagate on some Windows builds
 ```
 
-### Step 18: Event pipeline contract
+### Step 18: Event pipeline contract [x]
 - `CameraWorker._push()` uses `asyncio.run_coroutine_threadsafe` — non-blocking, thread-safe
 - `process_camera_events` task is cancelled in the shutdown `finally` before `app.stop()`, preventing sends on a stopped bot
 - `cam_thread.join(timeout=5)` ensures the camera writer is flushed before the process exits
