@@ -1,6 +1,7 @@
 import asyncio, logging, os, re, subprocess, shutil
 from pathlib import Path
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, ApplicationBuilder, CommandHandler,
     CallbackQueryHandler, ContextTypes,
@@ -121,6 +122,17 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.bot_data["stop_event"].set()
 
 
+async def _safe_edit(query, text: str, **kwargs):
+    """edit_message_text wrapper that swallows the 'Message is not modified'
+    BadRequest Telegram raises when the user re-taps a button whose result
+    is identical to the message's current state. Real failures still bubble."""
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
+
+
 async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cfg: Config = context.bot_data["config"]
@@ -135,7 +147,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "menu_status":
         state = worker.get_state()
         label = "🔴 Идёт запись" if state == "RECORDING" else "🟢 Ожидание"
-        await query.edit_message_text(f"Состояние: {label}", reply_markup=MAIN_MENU)
+        await _safe_edit(query, f"Состояние: {label}", reply_markup=MAIN_MENU)
 
     elif query.data == "menu_recordings":
         try:
@@ -149,7 +161,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             files = []
 
         if not files:
-            await query.edit_message_text("Записей нет.", reply_markup=MAIN_MENU)
+            await _safe_edit(query, "Записей нет.", reply_markup=MAIN_MENU)
             return
 
         active_file = worker.get_current_file()
@@ -167,7 +179,8 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"send_{f.name}",
             )])
         buttons.append([InlineKeyboardButton("← Назад", callback_data="menu_back")])
-        await query.edit_message_text(
+        await _safe_edit(
+            query,
             "Выберите запись для отправки (🔴 = активная запись, недоступна):",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
@@ -176,19 +189,20 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename = query.data[5:]
         file_path = _safe_file_path(filename, cfg.output_dir)
         if not file_path or not os.path.exists(file_path):
-            await query.edit_message_text("Файл не найден или недопустимое имя.", reply_markup=MAIN_MENU)
+            await _safe_edit(query, "Файл не найден или недопустимое имя.", reply_markup=MAIN_MENU)
             return
 
         # Refuse to send the currently-recording file (would produce a corrupt/truncated video)
         active = worker.get_current_file()
         if active and os.path.abspath(active) == os.path.abspath(file_path):
-            await query.edit_message_text(
+            await _safe_edit(
+                query,
                 "⏳ Эта запись сейчас ведётся — подождите её завершения.",
                 reply_markup=MAIN_MENU,
             )
             return
 
-        await query.edit_message_text(f"⏳ Подготовка и отправка {filename}…")
+        await _safe_edit(query, f"⏳ Подготовка и отправка {filename}…")
         try:
             send_path = await asyncio.to_thread(compress_for_telegram, file_path, cfg.max_send_size_mb)
         except Exception as e:
@@ -225,7 +239,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(send_path)
 
     elif query.data == "menu_back":
-        await query.edit_message_text("Выберите действие:", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "Выберите действие:", reply_markup=MAIN_MENU)
 
 
 async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Config):

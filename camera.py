@@ -74,11 +74,12 @@ class CameraWorker:
                 warmup_remaining -= 1
                 continue
 
-            motion = self._detect_motion_from_mask(full_mask, frame.shape)
             now = time.monotonic()
 
             if self.state == "IDLE":
-                if motion:
+                # Trigger only on ROI motion — keeps fan blades, TV flicker, and
+                # outside light changes from starting unwanted recordings.
+                if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=True):
                     self.debounce_count += 1
                     if self.debounce_count >= max(self.cfg.debounce_frames, 1):
                         self.debounce_count = 0
@@ -87,7 +88,10 @@ class CameraWorker:
                     self.debounce_count = 0
 
             elif self.state == "RECORDING":
-                if motion:
+                # Once recording is justified, accept motion anywhere in the
+                # frame so an intruder who steps out of the ROI (e.g., rummaging
+                # in a wardrobe) doesn't end the recording prematurely.
+                if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=False):
                     self.last_motion_time = now
                 self.writer.write(frame)
 
@@ -121,18 +125,29 @@ class CameraWorker:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
 
-    def _detect_motion_from_mask(self, full_mask, frame_shape) -> bool:
-        """Slice the full-frame MOG2 mask to the ROI and check contour area."""
-        h, w = frame_shape[:2]
-        x1 = int(self.cfg.roi[0] * w)
-        y1 = int(self.cfg.roi[1] * h)
-        x2 = int(self.cfg.roi[2] * w)
-        y2 = int(self.cfg.roi[3] * h)
-        if x1 >= x2 or y1 >= y2:
-            log.warning("ROI is invalid — using full frame for motion detection")
-            x1, y1, x2, y2 = 0, 0, w, h
-        roi_mask = full_mask[y1:y2, x1:x2]
-        contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    def _detect_motion_from_mask(self, full_mask, frame_shape, *, roi_only: bool) -> bool:
+        """Find motion by contour area in the MOG2 mask.
+
+        roi_only=True  — restrict the check to the configured door ROI. Used
+                         from IDLE to start a recording. Keeps incidental
+                         motion (curtains, fan, light changes) out of triggers.
+        roi_only=False — check the whole frame. Used while already RECORDING
+                         so an intruder who leaves the ROI keeps the recording
+                         alive. False positives here are harmless because the
+                         recording is already justified by the ROI trigger.
+        """
+        mask = full_mask
+        if roi_only:
+            h, w = frame_shape[:2]
+            x1 = int(self.cfg.roi[0] * w)
+            y1 = int(self.cfg.roi[1] * h)
+            x2 = int(self.cfg.roi[2] * w)
+            y2 = int(self.cfg.roi[3] * h)
+            if x1 < x2 and y1 < y2:
+                mask = full_mask[y1:y2, x1:x2]
+            else:
+                log.warning("ROI is invalid — falling back to full frame")
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return any(cv2.contourArea(c) > self.cfg.min_contour_area for c in contours)
 
     def _check_disk_space(self) -> bool:
