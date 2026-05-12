@@ -1,6 +1,7 @@
 import asyncio, threading, logging, atexit, os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from telegram.error import NetworkError, TimedOut
 from config import load_config
 from camera import CameraWorker
 from bot import build_application, process_camera_events
@@ -18,6 +19,23 @@ logging.basicConfig(
 # bot token. Drop them to WARNING so tokens never reach cctv.log or the console.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+class _CollapseUpdaterNetworkErrors(logging.Filter):
+    # Updater logs every polling failure with a ~130-line traceback. During an
+    # internet outage that produces thousands of duplicate frames. Replace with
+    # a single short WARNING line; the retry loop handles backoff itself.
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if isinstance(exc, (NetworkError, TimedOut)):
+            record.exc_info = None
+            record.exc_text = None
+            record.msg = "polling network error: %s"
+            record.args = (str(exc) or exc.__class__.__name__,)
+            record.levelno = logging.WARNING
+            record.levelname = "WARNING"
+        return True
+
+logging.getLogger("telegram.ext.Updater").addFilter(_CollapseUpdaterNetworkErrors())
 log = logging.getLogger(__name__)
 
 def _check_incomplete_recordings(output_dir: str):
