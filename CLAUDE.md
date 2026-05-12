@@ -5,11 +5,11 @@ Windows desktop CCTV using a Logitech Brio + Telegram bot. Single-host, single-u
 ## Module map
 
 - `main.py` — orchestration. Loads `Config`, sets up rotating file + console logging, prevents sleep, starts `CameraWorker` thread, runs the bot, awaits a stop event, then performs ordered shutdown.
-- `camera.py` — capture loop, MOG2 motion detection with 100-frame warmup, debounced IDLE↔RECORDING state machine, segmented mp4 writing (10 min cap), snapshot capture, disk-space guard. Emits events to an `asyncio.Queue` consumed by `bot.py`.
+- `camera.py` — capture loop, MOG2 motion detection with 100-frame warmup, debounced IDLE↔RECORDING state machine, segmented mp4 writing (10 min cap), snapshot capture, disk-space guard. Emits events to an `asyncio.Queue` consumed by `bot.py`. Three zone *lists* are applied to the MOG2 mask, each a semicolon-separated `x1,y1,x2,y2` set in `[detection]`: **activation_zones** (any-hit gates IDLE→RECORDING), **sustain_zones** (any-hit gates the keep-alive check during RECORDING), **ignore_zones** (zeroed in the mask before either check). The loader falls back to the legacy single-rect `roi_*` / `sustain_*` keys when the corresponding list key is empty.
 - `bot.py` — `python-telegram-bot` Application. `/start` (inline menu), `/stop` (remote shutdown), `/status`, callback handlers for listing/sending recordings. Path-traversal guard on filenames, current-file guard so the in-progress segment is never sent, ffmpeg re-encode to H.264 when a file exceeds `max_send_size_mb`.
 - `config.py` — `Config` dataclass; loads `config.ini` via configparser and `.env` via python-dotenv.
 - `windows_utils.py` — `prevent_sleep()` / `allow_sleep()` wrappers around `SetThreadExecutionState`.
-- `setup_roi.py` — interactive OpenCV tool to draw the door ROI; writes normalized `roi_x1..roi_y2` back to `config.ini [detection]`.
+- `setup_roi.py` — interactive OpenCV tool. Multi-mode: `1`/`2`/`3` switches between activation / sustain / ignore lists; ENTER appends the drawn rect to the active list; `D` removes the last rect in the active list; `S` writes all three lists to `config.ini [detection]` (and strips the legacy `roi_*` / `sustain_*` single-rect keys); ESC cancels without saving.
 - `start_cctv.bat` — venv activate + `python main.py` + `pause`.
 
 ## Critical invariants

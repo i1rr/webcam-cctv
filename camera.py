@@ -131,27 +131,44 @@ class CameraWorker:
     def _detect_motion_from_mask(self, full_mask, frame_shape, *, roi_only: bool) -> bool:
         """Find motion by contour area in the MOG2 mask.
 
-        roi_only=True  — restrict the check to the configured door ROI. Used
-                         from IDLE to start a recording. Keeps incidental
-                         motion (curtains, fan, light changes) out of triggers.
-        roi_only=False — check the whole frame. Used while already RECORDING
-                         so an intruder who leaves the ROI keeps the recording
-                         alive. False positives here are harmless because the
-                         recording is already justified by the ROI trigger.
+        roi_only=True  — check activation zones (any hit triggers IDLE→RECORDING).
+                         Keeps incidental motion (curtains, fan, light changes
+                         outside watched areas) from starting recordings.
+        roi_only=False — check sustain zones (any hit keeps a recording alive).
+
+        Ignore zones (light leak behind the door, auto-brightness flicker spots)
+        are zeroed in the mask before any zone is inspected, so they never
+        count toward motion in any state.
         """
-        mask = full_mask
-        if roi_only:
-            h, w = frame_shape[:2]
-            x1 = int(self.cfg.roi[0] * w)
-            y1 = int(self.cfg.roi[1] * h)
-            x2 = int(self.cfg.roi[2] * w)
-            y2 = int(self.cfg.roi[3] * h)
-            if x1 < x2 and y1 < y2:
-                mask = full_mask[y1:y2, x1:x2]
-            else:
-                log.warning("ROI is invalid — falling back to full frame")
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return any(cv2.contourArea(c) > self.cfg.min_contour_area for c in contours)
+        h, w = frame_shape[:2]
+
+        if self.cfg.ignore_zones:
+            full_mask = full_mask.copy()  # don't mutate the caller's mask
+            for zx1, zy1, zx2, zy2 in self.cfg.ignore_zones:
+                ix1, iy1 = int(zx1 * w), int(zy1 * h)
+                ix2, iy2 = int(zx2 * w), int(zy2 * h)
+                if ix1 < ix2 and iy1 < iy2:
+                    full_mask[iy1:iy2, ix1:ix2] = 0
+
+        zones = self.cfg.activation_zones if roi_only else self.cfg.sustain_zones
+        if not zones:
+            log.warning("No %s zones configured — falling back to full frame",
+                        "activation" if roi_only else "sustain")
+            zones = [(0.0, 0.0, 1.0, 1.0)]
+
+        threshold = self.cfg.min_contour_area
+        for zx1, zy1, zx2, zy2 in zones:
+            x1 = int(zx1 * w)
+            y1 = int(zy1 * h)
+            x2 = int(zx2 * w)
+            y2 = int(zy2 * h)
+            if x1 >= x2 or y1 >= y2:
+                continue
+            sub = full_mask[y1:y2, x1:x2]
+            contours, _ = cv2.findContours(sub, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if any(cv2.contourArea(c) > threshold for c in contours):
+                return True
+        return False
 
     def _check_disk_space(self) -> bool:
         """Return True if free space >= cfg.min_free_gb. Pushes a warning event

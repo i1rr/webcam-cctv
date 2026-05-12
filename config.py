@@ -18,7 +18,9 @@ class Config:
     mog2_var_threshold: float
     debounce_frames: int
     warmup_frames: int
-    roi: tuple          # (x1, y1, x2, y2) normalized 0.0–1.0
+    activation_zones: list      # list of (x1,y1,x2,y2) — any hit triggers IDLE→RECORDING
+    sustain_zones: list         # list of (x1,y1,x2,y2) — any hit sustains a recording
+    ignore_zones: list          # list of (x1,y1,x2,y2) — zeroed before activation/sustain checks
     output_dir: str
     segment_max_minutes: int
     min_free_gb: float
@@ -27,7 +29,51 @@ class Config:
 
     def __repr__(self) -> str:
         return (f"Config(chat_id={self.chat_id}, camera_index={self.camera_index}, "
-                f"roi={self.roi}, output_dir={self.output_dir!r}, bot_token=***)")
+                f"activation={len(self.activation_zones)}, sustain={len(self.sustain_zones)}, "
+                f"ignore={len(self.ignore_zones)}, "
+                f"output_dir={self.output_dir!r}, bot_token=***)")
+
+
+def _load_zone_list(ini: configparser.ConfigParser, key: str, *, legacy_prefix: str) -> list:
+    """Read `key` as a semicolon-separated zone list. If empty/absent, fall back
+    to a single legacy rect at `<legacy_prefix>_x1..y2`. If neither is set,
+    return [(0,0,1,1)] (whole frame) so detection still works."""
+    zones = _parse_zones(ini.get("detection", key, fallback=""))
+    if zones:
+        return zones
+    try:
+        rect = (
+            ini.getfloat("detection", f"{legacy_prefix}_x1"),
+            ini.getfloat("detection", f"{legacy_prefix}_y1"),
+            ini.getfloat("detection", f"{legacy_prefix}_x2"),
+            ini.getfloat("detection", f"{legacy_prefix}_y2"),
+        )
+        if rect[0] < rect[2] and rect[1] < rect[3]:
+            return [rect]
+    except (configparser.NoOptionError, ValueError):
+        pass
+    return [(0.0, 0.0, 1.0, 1.0)]
+
+
+def _parse_zones(raw: str) -> list:
+    """Parse 'x1,y1,x2,y2 ; x1,y1,x2,y2' into a list of normalized tuples.
+    Silently drops malformed or zero-area entries."""
+    zones = []
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = [p.strip() for p in chunk.split(",")]
+        if len(parts) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(p) for p in parts)
+        except ValueError:
+            continue
+        if x1 >= x2 or y1 >= y2:
+            continue
+        zones.append((x1, y1, x2, y2))
+    return zones
 
 def load_config() -> Config:
     ini = configparser.ConfigParser()
@@ -55,12 +101,9 @@ def load_config() -> Config:
         mog2_var_threshold=ini.getfloat("detection", "mog2_var_threshold", fallback=50),
         debounce_frames=ini.getint("detection", "debounce_frames", fallback=5),
         warmup_frames=ini.getint("detection", "warmup_frames", fallback=100),
-        roi=(
-            ini.getfloat("detection", "roi_x1", fallback=0.0),
-            ini.getfloat("detection", "roi_y1", fallback=0.0),
-            ini.getfloat("detection", "roi_x2", fallback=1.0),
-            ini.getfloat("detection", "roi_y2", fallback=1.0),
-        ),
+        activation_zones=_load_zone_list(ini, "activation_zones", legacy_prefix="roi"),
+        sustain_zones=_load_zone_list(ini, "sustain_zones", legacy_prefix="sustain"),
+        ignore_zones=_parse_zones(ini.get("detection", "ignore_zones", fallback="")),
         output_dir=ini.get("recording", "output_dir", fallback="recordings"),
         segment_max_minutes=ini.getint("recording", "segment_max_minutes", fallback=10),
         min_free_gb=ini.getfloat("recording", "min_free_gb", fallback=1.0),
