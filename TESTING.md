@@ -87,3 +87,28 @@ Send a bot callback with a payload such as `send_../../windows/system32/config/S
 ## Step 29 — Disk space warning test
 
 Fill the disk to less than 1 GB free (or temporarily reduce free space with a large dummy file), then trigger motion. Verify that Telegram receives a ⚠️ disk space warning and that recording is not started while free space remains below the threshold.
+
+## Step 30 — Remote camera on/off toggle
+
+1. Start the app and send `/start` to the bot. The top button must read **"🟢 Camera ON · tap to disable"**.
+2. Tap it. Verify within ~2 seconds:
+   - The Brio's privacy LED turns OFF (camera physically released).
+   - Telegram receives **"📷 Camera is now OFF"**.
+   - The top button now reads **"⚪ Camera OFF · tap to enable"**.
+   - Tap **📊 Status** — must show "⚪ Camera disabled".
+3. While disabled, attempt to use the camera in another app (Windows Camera, Zoom preview) — the device must be available with no "in use" error.
+4. Trigger motion in the camera's field of view — no recording should start, no Telegram alert should arrive.
+5. Tap the toggle again. Verify:
+   - The Brio LED turns back ON within ~1 second.
+   - Telegram receives **"📷 Camera is now ON"** after the ~3-second warmup completes.
+   - Motion in the activation zone now triggers a recording as normal.
+6. **Toggle-during-recording test**: trigger motion to start a recording, then while it's still recording tap the toggle to OFF. Verify:
+   - The immediate ack reads **"📷 Disabling camera… (finalizing in-progress recording first)"**.
+   - The in-progress segment is finalized and auto-sent to Telegram.
+   - "📷 Camera is now OFF" follows after the segment.
+   - The Brio LED goes dark.
+7. **Re-enable with camera unplugged**: physically unplug the camera, then tap the toggle to OFF and back to ON. Verify:
+   - Telegram receives **"⚠️ Camera error: Cannot open camera index N"**.
+   - The toggle button now reads **"🟢 Camera ON · tap to disable"** — this is intentional. The button reflects the user's *intent* (they want it on); the worker is retrying every 5s in the background. Tapping disable cancels the intent.
+   - No spam: only one error message arrives despite the ongoing retry loop.
+   - Plug the camera back in (without further taps). Within ~5 seconds the worker's next retry succeeds and **"📷 Camera is now ON"** arrives automatically.

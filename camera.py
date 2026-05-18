@@ -22,6 +22,10 @@ class CameraWorker:
         self.loop = loop
         self.queue = event_queue
         self._stop = threading.Event()
+        # Default ON so app starts with the original behaviour. Bot can clear/set
+        # this at runtime to release/reacquire the USB device without restarting.
+        self._enabled = threading.Event()
+        self._enabled.set()
         self.state = "IDLE"
         self.last_motion_time = 0.0
         self.debounce_count = 0
@@ -31,86 +35,142 @@ class CameraWorker:
         # Latches when disk space drops below cfg.min_free_gb; cleared once it
         # recovers. Prevents one Telegram warning per frame while motion persists.
         self._low_disk_warned: bool = False
+        # Latches when the capture device fails to open. Reset on user re-enable
+        # so a manual toggle always gets a fresh diagnostic if it still fails.
+        self._camera_error_warned: bool = False
+        # Tracks the last camera_state event we pushed so flicker (open succeeds
+        # then read fails repeatedly) doesn't spam the chat with state events.
+        # None means "no state pushed yet" — the first push always fires.
+        self._last_state_notified: bool | None = None
 
     def run(self):
+        Path(self.cfg.output_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            while not self._stop.is_set():
+                # Sleep here when toggled off. Releases nothing because nothing
+                # is held — the capture device is opened only inside the inner
+                # session below, so a disabled worker leaves the camera free
+                # for other apps and the Brio LED stays dark.
+                if not self._enabled.is_set():
+                    self._wait_for_enable()
+                    if self._stop.is_set():
+                        break
+                self._run_capture_session()
+        finally:
+            # Defensive: a writer leak past run() leaves a 0-byte mp4 on disk.
+            if self.state == "RECORDING":
+                self._stop_recording()
+            log.info("Camera worker stopped")
+
+    def _notify_camera_state(self, online: bool):
+        """Push a camera_state event only on actual transitions. Read failures
+        that auto-recover within one retry don't reach the chat."""
+        if self._last_state_notified is online:
+            return
+        self._last_state_notified = online
+        self._push({"type": "camera_state", "enabled": online})
+
+    def _wait_for_enable(self):
+        """Block until enable() is called or shutdown. stop() always sets
+        _enabled too, so a single wait() unblocks for either signal — the
+        outer run() loop's _stop check then decides which path was taken."""
+        log.info("Camera disabled — capture released, waiting for enable")
+        self._notify_camera_state(False)
+        self._enabled.wait()
+
+    def _run_capture_session(self):
+        """One open→loop→release cycle. Returns when stopped, disabled, or
+        on unrecoverable open failure. Outer run() decides whether to retry."""
         cap = self._open_camera()
         if cap is None:
-            self._push({"type": "camera_error",
-                        "message": "Cannot open camera index " + str(self.cfg.camera_index)})
+            if not self._camera_error_warned:
+                self._push({"type": "camera_error",
+                            "message": "Cannot open camera index " + str(self.cfg.camera_index)})
+                self._camera_error_warned = True
+            # Back off so a missing camera doesn't burn CPU. Bail early if the
+            # user stops during the wait.
+            self._stop.wait(timeout=5.0)
             return
+        self._notify_camera_state(True)
 
         fgbg = cv2.createBackgroundSubtractorMOG2(
             history=self.cfg.mog2_history,
             varThreshold=self.cfg.mog2_var_threshold,
             detectShadows=False,
         )
-        Path(self.cfg.output_dir).mkdir(parents=True, exist_ok=True)
-
         warmup_remaining = self.cfg.warmup_frames
-        log.info("Camera worker running (warmup: %d frames)", warmup_remaining)
+        log.info("Capture session running (warmup: %d frames)", warmup_remaining)
 
-        while not self._stop.is_set():
-            ret, frame = cap.read()
-            if not ret:
-                log.warning("Frame read failed — attempting camera reopen in 2s")
-                cap.release()
-                if self.state == "RECORDING":
-                    self._stop_recording()
-                time.sleep(2)
-                cap = self._open_camera()
-                if cap is None:
-                    self._push({"type": "camera_error",
-                                "message": "Camera lost and cannot reopen"})
-                    return
-                fgbg = cv2.createBackgroundSubtractorMOG2(
-                    history=self.cfg.mog2_history,
-                    varThreshold=self.cfg.mog2_var_threshold,
-                    detectShadows=False,
-                )
-                warmup_remaining = self.cfg.warmup_frames
-                continue
+        try:
+            while not self._stop.is_set() and self._enabled.is_set():
+                ret, frame = cap.read()
+                if not ret:
+                    log.warning("Frame read failed — closing session, will retry in 2s")
+                    self._stop.wait(timeout=2.0)
+                    return  # outer run() reopens
 
-            # Apply MOG2 to full frame to maintain consistent background model
-            full_mask = fgbg.apply(frame)
+                # Apply MOG2 to full frame to maintain consistent background model
+                full_mask = fgbg.apply(frame)
 
-            if warmup_remaining > 0:
-                warmup_remaining -= 1
-                continue
+                if warmup_remaining > 0:
+                    warmup_remaining -= 1
+                    continue
 
-            now = time.monotonic()
+                now = time.monotonic()
 
-            if self.state == "IDLE":
-                # Trigger only on ROI motion — keeps fan blades, TV flicker, and
-                # outside light changes from starting unwanted recordings.
-                if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=True):
-                    self.debounce_count += 1
-                    if self.debounce_count >= max(self.cfg.debounce_frames, 1):
+                if self.state == "IDLE":
+                    # Trigger only on ROI motion — keeps fan blades, TV flicker, and
+                    # outside light changes from starting unwanted recordings.
+                    if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=True):
+                        self.debounce_count += 1
+                        if self.debounce_count >= max(self.cfg.debounce_frames, 1):
+                            self.debounce_count = 0
+                            self._start_recording(frame, now)
+                    else:
                         self.debounce_count = 0
-                        self._start_recording(frame, now)
-                else:
-                    self.debounce_count = 0
 
-            elif self.state == "RECORDING":
-                # Once recording is justified, accept motion anywhere in the
-                # frame so an intruder who steps out of the ROI (e.g., rummaging
-                # in a wardrobe) doesn't end the recording prematurely.
-                if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=False):
-                    self.last_motion_time = now
-                self.writer.write(frame)
+                elif self.state == "RECORDING":
+                    # Once recording is justified, accept motion anywhere in the
+                    # frame so an intruder who steps out of the ROI (e.g., rummaging
+                    # in a wardrobe) doesn't end the recording prematurely.
+                    if self._detect_motion_from_mask(full_mask, frame.shape, roi_only=False):
+                        self.last_motion_time = now
+                    self.writer.write(frame)
 
-                if (now - self.segment_start_time) / 60 >= self.cfg.segment_max_minutes:
-                    self._rotate_segment(now)
+                    if (now - self.segment_start_time) / 60 >= self.cfg.segment_max_minutes:
+                        self._rotate_segment(now)
 
-                elif now - self.last_motion_time >= max(self.cfg.motion_timeout_sec, 1):
-                    self._stop_recording()
-
-        if self.state == "RECORDING":
-            self._stop_recording()
-        cap.release()
-        log.info("Camera worker stopped")
+                    elif now - self.last_motion_time >= max(self.cfg.motion_timeout_sec, 1):
+                        self._stop_recording()
+        finally:
+            # Always flush any active recording before releasing the device, so
+            # the in-progress segment is finalized and auto-sent regardless of
+            # whether we left via stop, disable, or a read failure.
+            if self.state == "RECORDING":
+                self._stop_recording()
+            cap.release()
 
     def stop(self):
         self._stop.set()
+        # Unblock _wait_for_enable so the thread can observe the stop flag.
+        self._enabled.set()
+
+    def enable(self):
+        """Resume capture. No-op if already enabled. Clears the open-failure
+        latch so a fresh error fires if the next open also fails — the user
+        just asked for the camera and deserves to know. Reset here (not only
+        in _wait_for_enable) so a rapid disable→enable double-tap that the
+        worker hasn't reacted to yet still gets the reset."""
+        self._camera_error_warned = False
+        self._enabled.set()
+
+    def disable(self):
+        """Pause capture and release the USB device. No-op if already disabled.
+        Any in-progress recording is finalized by _run_capture_session's finally."""
+        self._enabled.clear()
+
+    def is_enabled(self) -> bool:
+        return self._enabled.is_set()
 
     def get_state(self) -> str:
         return self.state
@@ -225,6 +285,12 @@ class CameraWorker:
         log.info("Recording started: %s", self.current_file)
 
     def _stop_recording(self):
+        # Guard against double-call (e.g., motion-timeout branch finalizes the
+        # segment on the same iteration the disable flag is observed, and the
+        # session's finally block would otherwise push a second spurious
+        # recording_saved with file_path=None).
+        if self.state != "RECORDING":
+            return
         if self.writer:
             self.writer.release()
             self.writer = None
@@ -267,4 +333,11 @@ class CameraWorker:
         log.info("Segment rotated → %s", self.current_file)
 
     def _push(self, event: dict):
-        asyncio.run_coroutine_threadsafe(self.queue.put(event), self.loop)
+        # run_coroutine_threadsafe raises RuntimeError if the loop is closed,
+        # which can happen if the camera thread is still draining its finally
+        # block after main.py's join() timed out. Swallowing keeps shutdown
+        # quiet; the event is lost but the bot is already gone.
+        try:
+            asyncio.run_coroutine_threadsafe(self.queue.put(event), self.loop)
+        except RuntimeError:
+            pass

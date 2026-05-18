@@ -86,11 +86,20 @@ IMPORTANT_SUBDIR = "important"
 # for HTTP overhead; anything larger is announced via text instead of upload.
 TELEGRAM_BOT_UPLOAD_LIMIT_MB = 49.0
 
-MAIN_MENU = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📹 Recordings", callback_data="menu_recordings")],
-    [InlineKeyboardButton("📊 Status", callback_data="menu_status")],
-    [InlineKeyboardButton("🗑️ Cleanup", callback_data="menu_cleanup")],
-])
+def _main_menu(worker: CameraWorker) -> InlineKeyboardMarkup:
+    """Top-of-menu camera toggle reflects current state — keep the menu in
+    sync with the hardware so the button label always matches what tapping
+    will do."""
+    if worker.is_enabled():
+        toggle_label = "🟢 Camera ON  ·  tap to disable"
+    else:
+        toggle_label = "⚪ Camera OFF  ·  tap to enable"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(toggle_label, callback_data="cam_toggle")],
+        [InlineKeyboardButton("📹 Recordings", callback_data="menu_recordings")],
+        [InlineKeyboardButton("📊 Status", callback_data="menu_status")],
+        [InlineKeyboardButton("🗑️ Cleanup", callback_data="menu_cleanup")],
+    ])
 
 
 def _authorized(update: Update, cfg: Config) -> bool:
@@ -148,9 +157,10 @@ def _list_recordings(cfg: Config) -> list[tuple[Path, bool]]:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg: Config = context.bot_data["config"]
+    worker: CameraWorker = context.bot_data["camera_worker"]
     if not _authorized(update, cfg):
         return
-    await update.message.reply_text("🎥 CCTV Monitor active.\nChoose an action:", reply_markup=MAIN_MENU)
+    await update.message.reply_text("🎥 CCTV Monitor active.\nChoose an action:", reply_markup=_main_menu(worker))
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +204,7 @@ def _back_button(target: str = "menu_back", label: str = "← Back") -> InlineKe
 async def _show_recordings_list(query, cfg: Config, worker: CameraWorker):
     items = _list_recordings(cfg)[:15]
     if not items:
-        await _safe_edit(query, "No recordings.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "No recordings.", reply_markup=_main_menu(worker))
         return
     active_file = worker.get_current_file()
     active_name = os.path.basename(active_file) if active_file else None
@@ -222,7 +232,7 @@ async def _show_recordings_list(query, cfg: Config, worker: CameraWorker):
 async def _show_file_actions(query, filename: str, cfg: Config, worker: CameraWorker):
     abs_path, is_important = _resolve_recording(filename, cfg)
     if not abs_path:
-        await _safe_edit(query, "File not found.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "File not found.", reply_markup=_main_menu(worker))
         return
     active = worker.get_current_file()
     is_active = active and os.path.abspath(active) == abs_path
@@ -248,11 +258,11 @@ async def _show_file_actions(query, filename: str, cfg: Config, worker: CameraWo
 async def _send_recording(context, query, filename: str, cfg: Config, worker: CameraWorker):
     abs_path, _is_imp = _resolve_recording(filename, cfg)
     if not abs_path:
-        await _safe_edit(query, "File not found.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "File not found.", reply_markup=_main_menu(worker))
         return
     active = worker.get_current_file()
     if active and os.path.abspath(active) == abs_path:
-        await _safe_edit(query, "⏳ Recording in progress — wait for it to finish.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "⏳ Recording in progress — wait for it to finish.", reply_markup=_main_menu(worker))
         return
     pretty = _pretty_name(filename)
     await _safe_edit(query, f"⏳ Preparing and sending {pretty}…")
@@ -263,7 +273,7 @@ async def _send_recording(context, query, filename: str, cfg: Config, worker: Ca
         await context.bot.send_message(
             chat_id=cfg.chat_id,
             text=f"⚠️ Error preparing file: {e}",
-            reply_markup=MAIN_MENU,
+            reply_markup=_main_menu(worker),
         )
         return
     try:
@@ -279,13 +289,13 @@ async def _send_recording(context, query, filename: str, cfg: Config, worker: Ca
         await context.bot.send_message(
             chat_id=cfg.chat_id,
             text=f"⚠️ Error sending video: {e}",
-            reply_markup=MAIN_MENU,
+            reply_markup=_main_menu(worker),
         )
     else:
         await context.bot.send_message(
             chat_id=cfg.chat_id,
             text="✅ Sent.",
-            reply_markup=MAIN_MENU,
+            reply_markup=_main_menu(worker),
         )
     finally:
         if send_path != abs_path and os.path.exists(send_path):
@@ -298,11 +308,11 @@ async def _send_recording(context, query, filename: str, cfg: Config, worker: Ca
 async def _toggle_important(query, filename: str, cfg: Config, worker: CameraWorker):
     abs_path, is_important = _resolve_recording(filename, cfg)
     if not abs_path:
-        await _safe_edit(query, "File not found.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "File not found.", reply_markup=_main_menu(worker))
         return
     active = worker.get_current_file()
     if active and os.path.abspath(active) == abs_path:
-        await _safe_edit(query, "⏳ Recording in progress — cannot move now.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "⏳ Recording in progress — cannot move now.", reply_markup=_main_menu(worker))
         return
     base = Path(cfg.output_dir)
     important_dir = base / IMPORTANT_SUBDIR
@@ -326,10 +336,10 @@ async def _toggle_important(query, filename: str, cfg: Config, worker: CameraWor
     )
 
 
-async def _confirm_delete(query, filename: str, cfg: Config):
+async def _confirm_delete(query, filename: str, cfg: Config, worker: CameraWorker):
     abs_path, is_important = _resolve_recording(filename, cfg)
     if not abs_path:
-        await _safe_edit(query, "File not found.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "File not found.", reply_markup=_main_menu(worker))
         return
     icon = "⭐" if is_important else "📄"
     text = (f"Delete this recording?\n\n{icon} {_pretty_name(filename)}\n\n"
@@ -344,11 +354,11 @@ async def _confirm_delete(query, filename: str, cfg: Config):
 async def _execute_delete(query, filename: str, cfg: Config, worker: CameraWorker):
     abs_path, _is_imp = _resolve_recording(filename, cfg)
     if not abs_path:
-        await _safe_edit(query, "File not found.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "File not found.", reply_markup=_main_menu(worker))
         return
     active = worker.get_current_file()
     if active and os.path.abspath(active) == abs_path:
-        await _safe_edit(query, "⏳ Recording in progress — cannot delete.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "⏳ Recording in progress — cannot delete.", reply_markup=_main_menu(worker))
         return
     try:
         os.remove(abs_path)
@@ -381,7 +391,7 @@ def _count_cleanup_candidates(cfg: Config, worker: CameraWorker) -> int:
 async def _cleanup_step1(query, cfg: Config, worker: CameraWorker):
     n = _count_cleanup_candidates(cfg, worker)
     if n == 0:
-        await _safe_edit(query, "Nothing to clean up — no non-important recordings.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "Nothing to clean up — no non-important recordings.", reply_markup=_main_menu(worker))
         return
     text = (f"⚠️ Cleanup will delete {n} non-important recording(s).\n\n"
             "⭐ Important recordings will be kept.")
@@ -395,7 +405,7 @@ async def _cleanup_step1(query, cfg: Config, worker: CameraWorker):
 async def _cleanup_step2(query, cfg: Config, worker: CameraWorker):
     n = _count_cleanup_candidates(cfg, worker)
     if n == 0:
-        await _safe_edit(query, "Nothing to clean up.", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "Nothing to clean up.", reply_markup=_main_menu(worker))
         return
     text = f"⚠️ Really delete {n} recording(s)?\n\nThis cannot be undone."
     buttons = [
@@ -433,7 +443,7 @@ async def _cleanup_execute(query, cfg: Config, worker: CameraWorker):
                     pass  # snapshots are best-effort
     except OSError as e:
         log.exception("cleanup iteration failed")
-        await _safe_edit(query, f"⚠️ Cleanup error: {e}", reply_markup=MAIN_MENU)
+        await _safe_edit(query, f"⚠️ Cleanup error: {e}", reply_markup=_main_menu(worker))
         return
     text = f"🗑️ Deleted {deleted} recording(s)"
     if snaps_deleted:
@@ -441,7 +451,7 @@ async def _cleanup_execute(query, cfg: Config, worker: CameraWorker):
     text += "."
     if failed:
         text += f"\n({failed} files could not be deleted — see log)"
-    await _safe_edit(query, text, reply_markup=MAIN_MENU)
+    await _safe_edit(query, text, reply_markup=_main_menu(worker))
 
 
 async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -457,9 +467,26 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "menu_status":
-        state = worker.get_state()
-        label = "🔴 Recording" if state == "RECORDING" else "🟢 Idle"
-        await _safe_edit(query, f"State: {label}", reply_markup=MAIN_MENU)
+        if not worker.is_enabled():
+            label = "⚪ Camera disabled"
+        else:
+            state = worker.get_state()
+            label = "🔴 Recording" if state == "RECORDING" else "🟢 Idle"
+        await _safe_edit(query, f"State: {label}", reply_markup=_main_menu(worker))
+    elif data == "cam_toggle":
+        # The worker pushes a camera_state event once it has actually toggled,
+        # which sends a plain-text confirmation (no keyboard, to avoid menu
+        # clutter). The text here is the immediate UI ack so the user sees
+        # something happen on tap, and carries the refreshed menu.
+        if worker.is_enabled():
+            was_recording = worker.get_state() == "RECORDING"
+            worker.disable()
+            text = ("📷 Disabling camera… (finalizing in-progress recording first)"
+                    if was_recording else "📷 Disabling camera…")
+        else:
+            worker.enable()
+            text = "📷 Enabling camera… (warming up ~3s)"
+        await _safe_edit(query, text, reply_markup=_main_menu(worker))
     elif data == "menu_recordings":
         await _show_recordings_list(query, cfg, worker)
     elif data == "menu_cleanup":
@@ -469,7 +496,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cleanall_go":
         await _cleanup_execute(query, cfg, worker)
     elif data == "menu_back":
-        await _safe_edit(query, "Choose an action:", reply_markup=MAIN_MENU)
+        await _safe_edit(query, "Choose an action:", reply_markup=_main_menu(worker))
     elif data.startswith("act_"):
         await _show_file_actions(query, data[4:], cfg, worker)
     elif data.startswith("send_"):
@@ -479,7 +506,7 @@ async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("delok_"):
         await _execute_delete(query, data[6:], cfg, worker)
     elif data.startswith("del_"):
-        await _confirm_delete(query, data[4:], cfg)
+        await _confirm_delete(query, data[4:], cfg, worker)
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +541,7 @@ async def _handle_recording_saved(app: Application, event: dict, cfg: Config):
     """Auto-send a just-finished recording (every segment, including rotations).
     Compresses to H.264 first, then send_video with retry. Falls back to a
     text notice if the compressed file exceeds Telegram's bot upload limit."""
+    worker: CameraWorker = app.bot_data["camera_worker"]
     fpath = event.get("file_path", "")
     is_rotation = event.get("is_segment_rotation", False)
     if not fpath or not os.path.exists(fpath):
@@ -542,7 +570,7 @@ async def _handle_recording_saved(app: Application, event: dict, cfg: Config):
                     text=(f"{icon} Recording too large to auto-send "
                           f"({size_mb:.1f} MB)\n{pretty}\n"
                           "Use the 📹 menu to retrieve it if needed."),
-                    reply_markup=MAIN_MENU,
+                    reply_markup=_main_menu(worker),
                 ),
                 what="recording_saved oversize-notice",
             )
@@ -574,6 +602,7 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
     Each send is retried on NetworkError/TimedOut so a Wi-Fi blackout doesn't
     drop motion alerts — events queue up locally and flush in order once the
     network returns."""
+    worker: CameraWorker = app.bot_data["camera_worker"]
     while True:
         event = await queue.get()
         try:
@@ -617,8 +646,23 @@ async def process_camera_events(app: Application, queue: asyncio.Queue, cfg: Con
                     lambda: app.bot.send_message(
                         chat_id=cfg.chat_id,
                         text=f"⚠️ Camera error: {event.get('message', 'Unknown')}",
+                        reply_markup=_main_menu(worker),
                     ),
                     what="camera_error message",
+                )
+
+            elif event["type"] == "camera_state":
+                # Confirms the hardware actually transitioned. Plain text, no
+                # keyboard: the immediate cam_toggle ack already carries the
+                # refreshed menu, and at startup (the only camera_state event
+                # the user didn't explicitly trigger) /start is one tap away.
+                # Skipping reply_markup here avoids littering the chat with
+                # menu copies on every toggle.
+                online = bool(event.get("enabled"))
+                text = "📷 Camera is now ON" if online else "📷 Camera is now OFF"
+                await _send_with_retry(
+                    lambda: app.bot.send_message(chat_id=cfg.chat_id, text=text),
+                    what=f"camera_state ({online})",
                 )
         except asyncio.CancelledError:
             raise

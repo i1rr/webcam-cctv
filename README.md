@@ -2,9 +2,9 @@
 
 Windows desktop CCTV with a USB webcam and a Telegram bot for motion alerts and on-demand recording playback. Developed against a Logitech Brio, but any DirectShow-compatible camera works.
 
-The application watches a configurable region of the camera frame for motion, records segmented MP4 clips while motion persists, sends a snapshot + alert to a single authorized Telegram chat when recording starts, and a summary when it ends. Past recordings are browsable and re-sendable from the bot's inline menu.
+The application watches a configurable region of the camera frame for motion, records segmented MP4 clips while motion persists, sends a snapshot + alert to a single authorized Telegram chat when recording starts, and a summary when it ends. Past recordings are browsable and re-sendable from the bot's inline menu. The camera can be turned on/off remotely from the bot — when off, the USB device is fully released (privacy LED goes dark, other apps can use the camera), so the app is safe to leave running 24/7 or auto-started at logon.
 
-Single-host, single-user. Operator starts the application manually via `start_cctv.bat`; the Telegram bot is the only remote interface.
+Single-host, single-user. Operator starts the application manually via `start_cctv.bat` (or via the Startup folder — see [SETUP.md](SETUP.md) step 6); the Telegram bot is the only remote interface.
 
 ---
 
@@ -91,19 +91,35 @@ In Telegram, send `/start` to your bot to confirm it is reachable. You should se
 > 🎥 CCTV Monitor active.
 > Choose an action:
 >
-> [📹 Recordings] [📊 Status]
+> [🟢 Camera ON · tap to disable]
+> [📹 Recordings]
+> [📊 Status]
+> [🗑️ Cleanup]
+
+### Turning the camera on/off remotely
+
+Tap the top button in the inline menu. When OFF:
+
+- The USB device is fully released — the Brio's privacy LED turns off, other apps (Windows Camera, Zoom, etc.) can use the camera.
+- No motion detection, no recordings, no alerts.
+- The bot stays online; tap the toggle again to re-enable.
+
+Tap again to enable. The camera comes back online within a few seconds (warmup runs again) and "📷 Camera is now ON" is delivered as confirmation. If you toggle off while a recording is in progress, that segment is finalized and auto-sent before the camera releases.
+
+The button reflects your *intent*. If you enable and the camera is unplugged, the worker keeps retrying in the background — once you plug it back in, "📷 Camera is now ON" arrives automatically without another tap.
 
 ### What the bot sends on its own
 
 | Event                          | Message                                                                  |
 | ------------------------------ | ------------------------------------------------------------------------ |
-| Motion starts                  | Snapshot photo + caption "🚨 Motion detected! Recording started." |
-| Recording ends (no motion 30s) | "✅ Recording finished: `recording_…mp4` (N MB)" + menu                  |
-| Segment rolls over mid-event   | Logged only (no Telegram spam during long events)                        |
+| Motion starts                  | Snapshot photo + caption "🚨 Motion detected! Recording started."        |
+| Recording ends (no motion 30s) | The recorded MP4 (auto-compressed) + caption with size                   |
+| Segment rolls over mid-event   | Each segment is auto-sent as it closes (so a long event arrives in order)|
+| Camera toggled on/off          | "📷 Camera is now ON" or "📷 Camera is now OFF" once the device transitions |
 | Disk free < `min_free_gb`      | "⚠️ Low disk space…" — recording is blocked until space frees            |
 | Camera error                   | "⚠️ Camera error: …"                                                     |
 
-The mid-event segment rotation cap is `segment_max_minutes` (default 10). The disk-space warning fires once per OK→low transition, not on every frame.
+The mid-event segment rotation cap is `segment_max_minutes` (default 10). The disk-space and camera-open warnings each fire once per OK→error transition, not on every frame.
 
 ### Browsing past recordings
 
@@ -114,11 +130,13 @@ Tap **📹 Recordings** in the inline menu. You get up to 10 most-recent files, 
 
 ### Checking state
 
-Tap **📊 Status** — shows either "🟢 Idle" or "🔴 Recording".
+Tap **📊 Status** — shows "🟢 Idle", "🔴 Recording", or "⚪ Camera disabled".
 
 ### Stopping the monitor
 
-Three options, in order of preference:
+For day-to-day "I want the camera off but the app to keep running," use the **camera toggle** in the menu (see above). It releases the USB device without touching the app process, so the bot stays reachable and you can re-enable later from anywhere.
+
+For an actual full shutdown of the application, three options in order of preference:
 
 1. **Telegram `/stop`** — graceful shutdown from anywhere, including when the workstation is locked.
 2. **Ctrl+C** in the console window.
@@ -168,8 +186,8 @@ All four are gitignored. Recordings are **never** auto-deleted — the operator 
 ## Module map
 
 - `main.py` — orchestration: loads config, configures logging, prevents sleep, starts the camera thread, runs the bot, awaits a stop event, performs ordered shutdown.
-- `camera.py` — capture loop, MOG2 motion detection, debounced state machine, segmented MP4 writing, snapshots, disk-space guard.
-- `bot.py` — `python-telegram-bot` Application: `/start`, `/stop`, inline-menu callbacks, ffmpeg re-encode for oversized files, current-file and path-traversal guards.
+- `camera.py` — capture loop, MOG2 motion detection, debounced state machine, segmented MP4 writing, snapshots, disk-space guard, runtime `enable()`/`disable()` that fully releases the USB device.
+- `bot.py` — `python-telegram-bot` Application: `/start`, `/stop`, inline-menu callbacks including the camera on/off toggle, ffmpeg re-encode for oversized files, current-file and path-traversal guards.
 - `config.py` — `Config` dataclass; reads `config.ini` + `.env`.
 - `windows_utils.py` — `SetThreadExecutionState` wrapper to suppress sleep.
 - `setup_roi.py` — interactive OpenCV ROI selector; writes back to `config.ini`.
